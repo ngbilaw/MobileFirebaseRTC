@@ -43,56 +43,83 @@ const configuration = {
 
 export default function App() {
   
-  const [ peerConnection, setPeerConnection ] = useState(new RTCPeerConnection(configuration));
+  const [ peerConnection, setPeerConnection ] = useState(null);
   const [ localStream, setLocalStream ] = useState(new MediaStream());
   const [ remoteStream, setRemoteStream ] = useState(new MediaStream());
-  const [ roomId, setRoomId ] = useState(null);
+  const [ roomId, setRoomId ] = useState();
 
-  // useEffect(() => {
-  //   setPeerConnection(new RTCPeerConnection(configuration));
-  // }, []);
+  useEffect(() => {
+    setPeerConnection(new RTCPeerConnection(configuration));
+    setLocalStream(new MediaStream());
+    setRemoteStream(new MediaStream());
+  }, []);
 
   const openUserMedia = async () => {
     console.log('Button Pressed');
-    const stream = await mediaDevices.getUserMedia(
-      {video: true, audio: true});
+
+    let isFront = true;
+    const sourceInfos = await mediaDevices.enumerateDevices();
+    console.log('Source infos: ', sourceInfos);
+
+    let videoSourceId;
+    for (let i = 0; i < sourceInfos.length; i++) {
+      const sourceInfo = sourceInfos[i];
+      if(sourceInfo.kind == "videoinput" && sourceInfo.facing == (isFront ? "front" : "environment")) {
+        videoSourceId = sourceInfo.deviceId;
+      }
+    }
+
+    const stream = await mediaDevices.getUserMedia({
+      audio: true,
+      video: {
+        mandatory: {
+          minWidth: 500, // Provide your own width, height and frame rate here
+          minHeight: 300,
+          minFrameRate: 30
+        },
+        facingMode: (isFront ? "user" : "environment"),
+        optional: (videoSourceId ? [{sourceId: videoSourceId}] : [])
+      }
+    })
+
+    // const stream = await mediaDevices.getUserMedia(
+    //   {video: true, audio: true});
     setLocalStream(stream);
-
-    console.log(stream);
-
-    console.log(localStream.toURL());
+    console.log('Local stream: ', localStream.toURL());
   };
 
   const createRoom = async () => {
     await openUserMedia();
 
+    registerPeerConnectionListeners();
+
     const db = firebase.firestore();
     const roomRef = await db.collection('rooms').doc();
 
     console.log('Create PeerConnection with configuration: ', configuration);
-    pc = peerConnection;
+    // pc = peerConnection;
 
-    pc.addStream(localStream);
+    peerConnection.addStream(localStream);
 
     // Code for collecting ICE candidates below
     const callerCandidatesCollection = roomRef.collection('callerCandidates');
 
-    pc.addEventListener('icecandidate', event => {
+    peerConnection.onicecandidate = event => {
       if (!event.candidate) {
         console.log('Got final candidate!');
         return;
       }
       console.log('Got candidate: ', event.candidate);
       callerCandidatesCollection.add(event.candidate.toJSON());
-    });
+    };
     // Code for collecting ICE candidates above
     
     // Code for creating a room below
-    const offer = await pc.createOffer({
+    const offer = await peerConnection.createOffer({
       offerToReceiveAudio: true,
       offerToReceiveVideo: true,
     });
-    await pc.setLocalDescription(offer);
+    await peerConnection.setLocalDescription(offer);
     console.log('Created offer:', offer);
 
     const roomWithOffer = {
@@ -106,32 +133,19 @@ export default function App() {
     console.log(`New room created with SDP offer. Room ID: ${roomRef.id}`);
     // Code for creating a room above
 
-    pc.addEventListener('track', event => {
-      // console.log('Got single remote track:' , event.track);
-      console.log('Got remote track:', event.streams[0]);
-      event.streams[0].getTracks().forEach(track => {
-        console.log('Add a track to the remoteStream:', track);
-        remoteStream.addTrack(track);
-      });
-    });
-
-    pc.addEventListener('addstream', event => {
-      console.log("Got remote stream!!!")
-      console.log('Got remote stream:', event.stream);
-      event.stream.getTracks().forEach(track => {
-        console.log('Add a track to the remoteStream:', track);
-        remoteStream.addTrack(track);
-      })
-      console.log(remoteStream.toURL());
-    });
+    peerConnection.onaddstream = event => {
+      // send event.candidate to peer
+      console.log("ON ADD STREAM!!!");
+      setRemoteStream(event.stream);
+    };
   
     // Listening for remote session description below
     roomRef.onSnapshot(async snapshot => {
       const data = snapshot.data();
-      if (!pc.currentRemoteDescription && data && data.answer) {
+      if (!peerConnection.currentRemoteDescription && data && data.answer) {
         console.log('Got remote description: ', data.answer);
         const rtcSessionDescription = new RTCSessionDescription(data.answer);
-        await pc.setRemoteDescription(rtcSessionDescription);
+        await peerConnection.setRemoteDescription(rtcSessionDescription);
       }
     });
     // Listening for remote session description above
@@ -142,14 +156,11 @@ export default function App() {
         if (change.type === 'added') {
           let data = change.doc.data();
           console.log(`Got new remote ICE candidate: ${JSON.stringify(data)}`);
-          await pc.addIceCandidate(new RTCIceCandidate(data));
+          await peerConnection.addIceCandidate(new RTCIceCandidate(data));
         }
       });
     });
     // Listen for remote ICE candidates above
-
-    await setPeerConnection(pc);
-    registerPeerConnectionListeners();
   };
 
   const joinRoom = async () => {
@@ -193,26 +204,29 @@ export default function App() {
     setRoomId(null);
     setLocalStream(new MediaStream());
     setRemoteStream(new MediaStream());
+    setPeerConnection(new RTCPeerConnection(configuration));
+    console.log('Local stream: ', localStream.toURL());
+    console.log('Remote stream: ', remoteStream.toURL());
   };
 
   const registerPeerConnectionListeners = () => {
-    peerConnection.addEventListener('icegatheringstatechange', () => {
+    peerConnection.onicegatheringstatechange = () => {
       console.log(
-          `ICE gathering state changed: ${peerConnection.iceGatheringState}`);
-    });
-  
-    peerConnection.addEventListener('connectionstatechange', () => {
+        `ICE gathering state changed: ${peerConnection.iceGatheringState}`);
+    };
+
+    peerConnection.onconnectionstatechange = () => {
       console.log(`Connection state change: ${peerConnection.connectionState}`);
-    });
-  
-    peerConnection.addEventListener('signalingstatechange', () => {
+    };
+
+    peerConnection.onsignalingstatechange = () => {
       console.log(`Signaling state change: ${peerConnection.signalingState}`);
-    });
-  
-    peerConnection.addEventListener('iceconnectionstatechange ', () => {
+    };
+
+    peerConnection.oniceconnectionstatechange = () => {
       console.log(
-          `ICE connection state change: ${peerConnection.iceConnectionState}`);
-    });
+        `ICE connection state change: ${peerConnection.iceConnectionState}`);
+    };
   }
   
   return (
@@ -225,8 +239,8 @@ export default function App() {
         <AppButton color='white' title="Join Room" onPress={joinRoom} />
         <AppButton color='white' title="Hang up" onPress={hangUp} />
         <View style={styles.videoContainer}>
-          <RTCView streamURL={localStream ? localStream.toURL(): ''} objectFit='container' mirror={true} style={styles.video}/>
-          <RTCView streamURL={remoteStream ? remoteStream.toURL(): ''} objectFit='container' mirror={true} style={styles.video}/>
+          <RTCView streamURL={localStream.toURL()} objectFit='container' mirror={true} style={styles.video}/>
+          <RTCView streamURL={remoteStream.toURL()} objectFit='container' mirror={true} style={styles.video}/>
         </View>
       </SafeAreaView>
     </>
