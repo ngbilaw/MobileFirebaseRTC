@@ -15,6 +15,9 @@ import {
   Text,
   StatusBar,
   TouchableOpacity,
+  Modal,
+  TextInput,
+  Button
 } from 'react-native';
 import {
   RTCPeerConnection,
@@ -43,16 +46,18 @@ const configuration = {
 
 export default function App() {
   
-  const [ peerConnection, setPeerConnection ] = useState(null);
+  const [ peerConnection, setPeerConnection ] = useState(new RTCPeerConnection(configuration));
   const [ localStream, setLocalStream ] = useState(new MediaStream());
   const [ remoteStream, setRemoteStream ] = useState(new MediaStream());
   const [ roomId, setRoomId ] = useState();
+  const [ modalVisible, setModalVisible ] = useState(false);
+  const [ roomIdInput, setRoomIdInput ] = useState('');
 
-  useEffect(() => {
-    setPeerConnection(new RTCPeerConnection(configuration));
-    setLocalStream(new MediaStream());
-    setRemoteStream(new MediaStream());
-  }, []);
+  // useEffect(() => {
+  //   setPeerConnection(new RTCPeerConnection(configuration));
+  //   setLocalStream(new MediaStream());
+  //   setRemoteStream(new MediaStream());
+  // }, []);
 
   const openUserMedia = async () => {
     console.log('Button Pressed');
@@ -91,10 +96,10 @@ export default function App() {
   const createRoom = async () => {
     await openUserMedia();
 
-    registerPeerConnectionListeners();
-
     const db = firebase.firestore();
     const roomRef = await db.collection('rooms').doc();
+
+    registerPeerConnectionListeners();
 
     console.log('Create PeerConnection with configuration: ', configuration);
     // pc = peerConnection;
@@ -164,10 +169,73 @@ export default function App() {
   };
 
   const joinRoom = async () => {
-    console.log('Join room');
+    console.log('Join room clicked');
+    setModalVisible(true);
 
-    openUserMedia();
+    await openUserMedia();
+  };
 
+  const joinRoomById = async (roomIdInput) => {
+    setRoomId(roomIdInput);
+    setModalVisible(false);
+
+    const db = firebase.firestore();
+    const roomRef = db.collection('rooms').doc(`${roomId}`);
+    const roomSnapshot = await roomRef.get();
+    console.log('Got room:', roomSnapshot.exists);
+
+    if (roomSnapshot.exists) {
+      console.log('Create PeerConnection with configuration: ', configuration);
+      registerPeerConnectionListeners();
+      peerConnection.addStream(localStream);
+  
+      // Code for collecting ICE candidates below
+      const calleeCandidatesCollection = roomRef.collection('calleeCandidates');
+      peerConnection.onicecandidate = event => {
+        if (!event.candidate) {
+          console.log('Got final candidate!');
+          return;
+        }
+        console.log('Got candidate: ', event.candidate);
+        calleeCandidatesCollection.add(event.candidate.toJSON());
+      };
+      // Code for collecting ICE candidates above
+  
+      peerConnection.onaddstream = event => {
+        // send event.candidate to peer
+        console.log("ON ADD STREAM!!!");
+        setRemoteStream(event.stream);
+      };
+  
+      // Code for creating SDP answer below
+      const offer = roomSnapshot.data().offer;
+      console.log('Got offer:', offer);
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+      const answer = await peerConnection.createAnswer();
+      console.log('Created answer:', answer);
+      await peerConnection.setLocalDescription(answer);
+  
+      const roomWithAnswer = {
+        answer: {
+          type: answer.type,
+          sdp: answer.sdp,
+        },
+      };
+      await roomRef.update(roomWithAnswer);
+      // Code for creating SDP answer above
+  
+      // Listening for remote ICE candidates below
+      roomRef.collection('callerCandidates').onSnapshot(snapshot => {
+        snapshot.docChanges().forEach(async change => {
+          if (change.type === 'added') {
+            let data = change.doc.data();
+            console.log(`Got new remote ICE candidate: ${JSON.stringify(data)}`);
+            await peerConnection.addIceCandidate(new RTCIceCandidate(data));
+          }
+        });
+      });
+      // Listening for remote ICE candidates above
+    }
   };
 
   const hangUp = async () => {
@@ -233,8 +301,7 @@ export default function App() {
     <>
       <StatusBar barStyle="dark-content" />
       <SafeAreaView style={styles.container}>
-        {/* <AppButton color='white' title="Open Camera and Mic" onPress={openUserMedia} /> */}
-        { roomId && <Text>{roomId}</Text>}
+        { roomId && <Text>Room ID: {roomId}</Text> }
         <AppButton color='white' title="Create Room" onPress={createRoom} />
         <AppButton color='white' title="Join Room" onPress={joinRoom} />
         <AppButton color='white' title="Hang up" onPress={hangUp} />
@@ -242,6 +309,19 @@ export default function App() {
           <RTCView streamURL={localStream.toURL()} objectFit='container' mirror={true} style={styles.video}/>
           <RTCView streamURL={remoteStream.toURL()} objectFit='container' mirror={true} style={styles.video}/>
         </View>
+        <Modal visible={modalVisible} animationType="slide">
+          <View style={styles.modalView}>
+            <Button title="Close" onPress={() => setModalVisible(false)} />
+            <Text>Enter Room ID:</Text>
+            <TextInput
+              style={{ height: 40, borderColor: 'gray', borderWidth: 1 }}
+              onChangeText={text => setRoomIdInput(text)}
+              name='Room ID'
+              placeholder='Room ID'
+            />
+            <AppButton color='white' title='Join Room' onPress={() => joinRoomById(roomIdInput)}/>
+          </View>
+        </Modal>
       </SafeAreaView>
     </>
   );
@@ -260,5 +340,11 @@ const styles = StyleSheet.create({
   videoContainer: {
     flexDirection: 'row',
     height: 300,
+  },
+  modalView: {
+    padding: 20,
+    flex: 1,
+    justifyContent: 'center',
+    alignContent: 'center',
   }
 });
