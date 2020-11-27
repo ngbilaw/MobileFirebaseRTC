@@ -10,11 +10,9 @@ import React, { useState, useEffect } from 'react';
 import {
   SafeAreaView,
   StyleSheet,
-  ScrollView,
   View,
   Text,
   StatusBar,
-  TouchableOpacity,
   Modal,
   TextInput,
   Button
@@ -31,6 +29,7 @@ import {
 } from 'react-native-webrtc';
 import firebase from './src/config/firebase';
 import AppButton from './src/components/AppButton';
+import VideoContainer from './src/components/VideoContainer';
 
 const configuration = {
   iceServers: [
@@ -52,12 +51,14 @@ export default function App() {
   const [ roomId, setRoomId ] = useState();
   const [ modalVisible, setModalVisible ] = useState(false);
   const [ roomIdInput, setRoomIdInput ] = useState('');
+  const [ db, setDb ] = useState();
 
-  // useEffect(() => {
-  //   setPeerConnection(new RTCPeerConnection(configuration));
-  //   setLocalStream(new MediaStream());
-  //   setRemoteStream(new MediaStream());
-  // }, []);
+  useEffect(() => {
+    // setPeerConnection(new RTCPeerConnection(configuration));
+    // setLocalStream(new MediaStream());
+    // setRemoteStream(new MediaStream());
+    setDb(firebase.firestore());
+  }, []);
 
   const openUserMedia = async () => {
     console.log('Button Pressed');
@@ -87,8 +88,6 @@ export default function App() {
       }
     })
 
-    // const stream = await mediaDevices.getUserMedia(
-    //   {video: true, audio: true});
     setLocalStream(stream);
     console.log('Local stream: ', localStream.toURL());
   };
@@ -96,13 +95,11 @@ export default function App() {
   const createRoom = async () => {
     await openUserMedia();
 
-    const db = firebase.firestore();
     const roomRef = await db.collection('rooms').doc();
 
     registerPeerConnectionListeners();
 
     console.log('Create PeerConnection with configuration: ', configuration);
-    // pc = peerConnection;
 
     peerConnection.addStream(localStream);
 
@@ -125,7 +122,7 @@ export default function App() {
       offerToReceiveVideo: true,
     });
     await peerConnection.setLocalDescription(offer);
-    console.log('Created offer:', offer);
+    console.log('Created offer:', JSON.stringify(offer));
 
     const roomWithOffer = {
       'offer': {
@@ -175,14 +172,14 @@ export default function App() {
     await openUserMedia();
   };
 
-  const joinRoomById = async (roomIdInput) => {
-    setRoomId(roomIdInput);
+  const joinRoomById = async () => {
+    console.log('Join room: ', roomIdInput);
+    await setRoomId(roomIdInput);
     setModalVisible(false);
 
-    const db = firebase.firestore();
     const roomRef = db.collection('rooms').doc(`${roomId}`);
     const roomSnapshot = await roomRef.get();
-    console.log('Got room:', roomSnapshot.exists);
+    console.log('Got room: ', roomSnapshot.exists);
 
     if (roomSnapshot.exists) {
       console.log('Create PeerConnection with configuration: ', configuration);
@@ -203,7 +200,7 @@ export default function App() {
   
       peerConnection.onaddstream = event => {
         // send event.candidate to peer
-        console.log("ON ADD STREAM!!!");
+        console.log("Got remote stream: ", event.stream);
         setRemoteStream(event.stream);
       };
   
@@ -211,8 +208,11 @@ export default function App() {
       const offer = roomSnapshot.data().offer;
       console.log('Got offer:', offer);
       await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-      const answer = await peerConnection.createAnswer();
-      console.log('Created answer:', answer);
+      const answer = await peerConnection.createAnswer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true,
+      });
+      console.log('Created answer:', JSON.stringify(answer));
       await peerConnection.setLocalDescription(answer);
   
       const roomWithAnswer = {
@@ -256,7 +256,6 @@ export default function App() {
 
     // Delete room on hangup
     if (roomId) {
-      const db = firebase.firestore();
       const roomRef = db.collection('rooms').doc(roomId);
       const calleeCandidates = await roomRef.collection('calleeCandidates').get();
       calleeCandidates.forEach(async candidate => {
@@ -301,13 +300,26 @@ export default function App() {
     <>
       <StatusBar barStyle="dark-content" />
       <SafeAreaView style={styles.container}>
-        { roomId && <Text>Room ID: {roomId}</Text> }
-        <AppButton color='white' title="Create Room" onPress={createRoom} />
-        <AppButton color='white' title="Join Room" onPress={joinRoom} />
-        <AppButton color='white' title="Hang up" onPress={hangUp} />
+        <View style={styles.buttonsContainer} >
+          <AppButton title="Create Room" onPress={createRoom}/>
+          <AppButton title="Join Room" onPress={joinRoom} />
+          <AppButton title="Hang up" onPress={hangUp} />
+        </View>
+        <Text>Room ID: {roomId}</Text>
         <View style={styles.videoContainer}>
-          <RTCView streamURL={localStream.toURL()} objectFit='container' mirror={true} style={styles.video}/>
-          <RTCView streamURL={remoteStream.toURL()} objectFit='container' mirror={true} style={styles.video}/>
+          <RTCView
+            streamURL={localStream && localStream.toURL()}
+            objectFit='cover'
+            mirror={true}
+            style={styles.localVideo}
+            zOrder={2}
+          />
+          <RTCView
+            streamURL={remoteStream && remoteStream.toURL()}
+            objectFit='cover'
+            mirror={true}
+            style={styles.remoteVideo}
+          />
         </View>
         <Modal visible={modalVisible} animationType="slide">
           <View style={styles.modalView}>
@@ -331,20 +343,35 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     justifyContent: 'center',
-    alignItems: 'stretch',
   },
-  video: {
-    width: '50%',
-    backgroundColor: 'black'
+  localVideo: {
+    height: 150,
+    width: 100,
+    position: 'absolute',
+    bottom: 20,
+    right: 20,
+    zIndex: 2,
+  },  
+  remoteVideo: {
+    height: '100%',
+    width: '100%',
+    backgroundColor: 'black',
+    position: 'absolute',
   },
   videoContainer: {
     flexDirection: 'row',
-    height: 300,
+    flex: 8,
   },
   modalView: {
     padding: 20,
     flex: 1,
     justifyContent: 'center',
-    alignContent: 'center',
-  }
+  },
+  buttonsContainer: {
+    flexDirection: 'row',
+    flex: 1,
+    marginVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
 });
