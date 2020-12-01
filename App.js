@@ -176,8 +176,8 @@ export default function App() {
     console.log('Join room: ', roomIdInput);
     await setRoomId(roomIdInput);
     setModalVisible(false);
-
-    const roomRef = db.collection('rooms').doc(`${roomId}`);
+    
+    const roomRef = await db.collection('rooms').doc(`${roomIdInput}`);
     const roomSnapshot = await roomRef.get();
     console.log('Got room: ', roomSnapshot.exists);
 
