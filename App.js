@@ -52,6 +52,7 @@ export default function App() {
   const [ modalVisible, setModalVisible ] = useState(false);
   const [ roomIdInput, setRoomIdInput ] = useState('');
   const [ db, setDb ] = useState();
+  const [ onCall, setOnCall] = useState(false);
 
   useEffect(() => {
     // setPeerConnection(new RTCPeerConnection(configuration));
@@ -94,6 +95,7 @@ export default function App() {
 
   const createRoom = async () => {
     await openUserMedia();
+    setOnCall(true);
 
     const roomRef = await db.collection('rooms').doc();
 
@@ -101,6 +103,7 @@ export default function App() {
 
     console.log('Create PeerConnection with configuration: ', configuration);
 
+    console.log('Adding local stream to PC', JSON.stringify(localStream));
     peerConnection.addStream(localStream);
 
     // Code for collecting ICE candidates below
@@ -176,6 +179,7 @@ export default function App() {
     console.log('Join room: ', roomIdInput);
     await setRoomId(roomIdInput);
     setModalVisible(false);
+    setOnCall(true);
     
     const roomRef = await db.collection('rooms').doc(`${roomIdInput}`);
     const roomSnapshot = await roomRef.get();
@@ -184,6 +188,7 @@ export default function App() {
     if (roomSnapshot.exists) {
       console.log('Create PeerConnection with configuration: ', configuration);
       registerPeerConnectionListeners();
+      console.log('Adding local stream to PC', JSON.stringify(localStream));
       peerConnection.addStream(localStream);
   
       // Code for collecting ICE candidates below
@@ -240,6 +245,7 @@ export default function App() {
 
   const hangUp = async () => {
     console.log('Hang up');
+    setOnCall(false);
 
     const tracks = localStream.getTracks();
     tracks.forEach(track => {
@@ -301,9 +307,9 @@ export default function App() {
       <StatusBar barStyle="dark-content" />
       <SafeAreaView style={styles.container}>
         <View style={styles.buttonsContainer} >
-          <AppButton title="Create Room" onPress={createRoom}/>
-          <AppButton title="Join Room" onPress={joinRoom} />
-          <AppButton title="Hang up" onPress={hangUp} />
+          <AppButton title="Create Room" onPress={createRoom} disabled={onCall} />
+          <AppButton title="Join Room" onPress={joinRoom} disabled={onCall} />
+          <AppButton title="Hang up" onPress={hangUp} disabled={!onCall} />
         </View>
         <Text>Room ID: {roomId}</Text>
         <View style={styles.videoContainer}>
