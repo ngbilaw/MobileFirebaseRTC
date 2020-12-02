@@ -5,7 +5,7 @@ function AppButton({ title, onPress, style, disabled = false }) {
   return (
     <View style={style}>
       <TouchableOpacity
-        style={styles.button}
+        style={disabled ? [styles.button, styles.mutedButton] : styles.button}
         onPress={onPress}
         disabled={disabled}
       >
@@ -27,7 +27,11 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     textTransform: 'uppercase',
     textAlign: 'center',
-  }
+  },
+  mutedButton: {
+    backgroundColor: 'lightgray',
+  },
+
 });
 
 export default AppButton;
