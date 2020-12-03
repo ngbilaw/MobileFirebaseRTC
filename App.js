@@ -27,6 +27,8 @@ import {
   mediaDevices,
   registerGlobals
 } from 'react-native-webrtc';
+import axios from 'axios';
+import io from 'socket.io-client';
 import firebase from './src/config/firebase';
 import AppButton from './src/components/AppButton';
 import VideoContainer from './src/components/VideoContainer';
@@ -42,6 +44,9 @@ const configuration = {
   ],
   iceCandidatePoolSize: 10,
 };
+
+const url = 'https://43adf88eff5e.ngrok.io';
+const socket = io(url);
 
 export default function App() {
   
@@ -101,7 +106,9 @@ export default function App() {
     console.log('Stream2: ', JSON.stringify(stream));
     setOnCall(true);
 
-    const roomRef = await db.collection('rooms').doc();
+    const room = await axios.post(`${url}/create-room`);
+    console.log("MONGO ROOM ID: ", room.data);
+    socket.emit('create room', { roomId: room.data });
 
     registerPeerConnectionListeners();
 
@@ -112,7 +119,6 @@ export default function App() {
     peerConnection.addStream(stream);
 
     // Code for collecting ICE candidates below
-    const callerCandidatesCollection = roomRef.collection('callerCandidates');
 
     peerConnection.onicecandidate = event => {
       if (!event.candidate) {
@@ -120,7 +126,8 @@ export default function App() {
         return;
       }
       console.log('Got candidate: ', event.candidate);
-      callerCandidatesCollection.add(event.candidate.toJSON());
+      const data = { candidate: event.candidate.toJSON(), room: room.data };
+      axios.post(`${url}/add-callers`, data);
     };
     // Code for collecting ICE candidates above
     
@@ -138,9 +145,9 @@ export default function App() {
         sdp: offer.sdp,
       },
     };
-    await roomRef.set(roomWithOffer);
-    setRoomId(roomRef.id);
-    console.log(`New room created with SDP offer. Room ID: ${roomRef.id}`);
+    axios.post(`${url}/set-room-offer/${room.data}`, { data: roomWithOffer })
+    setRoomId(room.data);
+    console.log(`New room created with SDP offer. Room ID: ${room.data}`);
     // Code for creating a room above
 
     peerConnection.onaddstream = event => {
@@ -150,25 +157,23 @@ export default function App() {
     };
   
     // Listening for remote session description below
-    roomRef.onSnapshot(async snapshot => {
-      const data = snapshot.data();
-      if (!peerConnection.currentRemoteDescription && data && data.answer) {
-        console.log('Got remote description: ', data.answer);
-        const rtcSessionDescription = new RTCSessionDescription(data.answer);
-        await peerConnection.setRemoteDescription(rtcSessionDescription);
+    socket.on('caller snapshot', (snapshot) => {
+      const data = snapshot;
+      if (
+          !peerConnection.currentRemoteDescription &&
+          data.updatedFields &&
+          data.updatedFields.answer
+      ) {
+        console.log('Got remote description: ', data.updatedFields.answer);
+        const rtcSessionDescription = new RTCSessionDescription(data.updatedFields.answer);
+        peerConnection.setRemoteDescription(rtcSessionDescription);
       }
     });
     // Listening for remote session description above
   
     // Listen for remote ICE candidates below
-    roomRef.collection('calleeCandidates').onSnapshot(snapshot => {
-      snapshot.docChanges().forEach(async change => {
-        if (change.type === 'added') {
-          let data = change.doc.data();
-          console.log(`Got new remote ICE candidate: ${JSON.stringify(data)}`);
-          await peerConnection.addIceCandidate(new RTCIceCandidate(data));
-        }
-      });
+    socket.on('callee snapshot', (snapshot) => {
+      peerConnection.addIceCandidate(new RTCIceCandidate(snapshot));
     });
     // Listen for remote ICE candidates above
   };
@@ -316,9 +321,12 @@ export default function App() {
           <AppButton title="Join Room" onPress={joinRoom} disabled={onCall} />
           <AppButton title="Hang up" onPress={hangUp} disabled={!onCall} />
         </View>
-        <View style={styles.textContainer}>
-          <Text>Room ID: {roomId}</Text>
-        </View>
+        { 
+          roomId && 
+          <View style={styles.textContainer}>
+            <Text>Room ID: {roomId}</Text>
+          </View>
+        }
         <View style={styles.videoContainer}>
           <RTCView
             streamURL={localStream && localStream.toURL()}
