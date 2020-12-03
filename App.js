@@ -89,12 +89,16 @@ export default function App() {
       }
     })
 
-    setLocalStream(stream);
-    console.log('Local stream: ', localStream.toURL());
+    
+    console.log('Stream: ', JSON.stringify(stream));
+    await setLocalStream(stream);
+    console.log('Local stream: ', JSON.stringify(localStream));
+    return stream;
   };
 
   const createRoom = async () => {
-    await openUserMedia();
+    const stream = await openUserMedia();
+    console.log('Stream2: ', JSON.stringify(stream));
     setOnCall(true);
 
     const roomRef = await db.collection('rooms').doc();
@@ -103,8 +107,9 @@ export default function App() {
 
     console.log('Create PeerConnection with configuration: ', configuration);
 
-    console.log('Adding local stream to PC', JSON.stringify(localStream));
-    peerConnection.addStream(localStream);
+    console.log('Adding local stream to PC', JSON.stringify(stream));
+    setLocalStream(stream);
+    peerConnection.addStream(stream);
 
     // Code for collecting ICE candidates below
     const callerCandidatesCollection = roomRef.collection('callerCandidates');
@@ -311,7 +316,9 @@ export default function App() {
           <AppButton title="Join Room" onPress={joinRoom} disabled={onCall} />
           <AppButton title="Hang up" onPress={hangUp} disabled={!onCall} />
         </View>
-        <Text>Room ID: {roomId}</Text>
+        <View style={styles.textContainer}>
+          <Text>Room ID: {roomId}</Text>
+        </View>
         <View style={styles.videoContainer}>
           <RTCView
             streamURL={localStream && localStream.toURL()}
@@ -376,8 +383,13 @@ const styles = StyleSheet.create({
   buttonsContainer: {
     flexDirection: 'row',
     flex: 1,
-    marginVertical: 10,
+    marginVertical: 4,
     alignItems: 'center',
     justifyContent: 'space-between',
   },
+  textContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 15,
+  },  
 });
